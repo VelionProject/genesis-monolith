@@ -1,0 +1,2 @@
+# genesis-monolith
+Deterministic world simulation: chemistry → replication → agents → culture
