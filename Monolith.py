@@ -1,21 +1,18 @@
-# genesis_monolith.py
+# Monolith.py
 # Genesis v1.4+ — Monolith + Hunter Agent + Anomaly Inbox (UI-first, no tkinter)
 #
 # Requirements:
-#   pip install numpy PySide6 matplotlib
+#   pip install numpy PySide6 pyqtgraph matplotlib
 #
 # Run UI:
-#   python genesis_monolith.py
+#   python Monolith.py
 #
 # Headless:
-#   python genesis_monolith.py --headless --ticks 200000 --snapshot-every 5000
+#   python Monolith.py --headless --ticks 200000 --snapshot-every 5000
 #
-# Replay:
-#   python genesis_monolith.py --replay runs/<runid>/snapshots/tick_000050000.npz --ticks 20000
-#
-# Sweep (grid search):
-#   python genesis_monolith.py --sweep --ticks 60000 --seeds 12345,222,333 \
-#       --grid "k2:0.015,0.02,0.03;energy_strength:0.02,0.03;M_mut_sigma:0.01,0.02"
+# Note:
+#   CLI currently supports seed/size/headless/ticks/snapshot-every.
+#   Replay/sweep commands are planned for a later milestone.
 #
 # NEW (UI):
 #   - Hunter Agent ON/OFF: brute-force seeds in background
@@ -28,10 +25,9 @@ import json
 import time
 import argparse
 import hashlib
-import itertools
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -84,7 +80,7 @@ class WorldConfig:
     diffusion_damping_strength: float = 0.6
 
     # Phase 1: M (proto-genome)
-    enable_M: bool = True
+    enable_M: bool = False
     M_init_mode: str = "baseline"  # "baseline" | "noise" | "islands"
     M_baseline: float = 0.5
     M_island_count: int = 12
@@ -682,7 +678,6 @@ def save_anomaly_bundle(
     return out
 
 # UI-side thread agent
-# remembered: no CLI; runs background; only drops anomaly bundles.
 def _seed_stream(rng: np.random.Generator, count: int) -> List[int]:
     return [int(rng.integers(0, 2**31 - 1)) for _ in range(count)]
 
@@ -696,6 +691,9 @@ def _seed_stream(rng: np.random.Generator, count: int) -> List[int]:
 # =========================
 
 def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
+    import importlib
+    import importlib.util
+
     from PySide6.QtCore import Qt, QTimer, QThread, Signal
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget,
@@ -703,8 +701,22 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         QSlider, QLabel, QCheckBox, QGroupBox, QSpinBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit
     )
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
+    # Renderer selection (UI-only): prefer PyQtGraph for high-frequency image updates,
+    # keep Matplotlib as a compatibility fallback if PyQtGraph is not installed.
+    pg = None
+    Figure = None
+    FigureCanvas = None
+    plot_backend = "none"
+    if importlib.util.find_spec("pyqtgraph") is not None:
+        pg = importlib.import_module("pyqtgraph")
+        plot_backend = "pyqtgraph"
+    elif importlib.util.find_spec("matplotlib") is not None:
+        Figure = importlib.import_module("matplotlib.figure").Figure
+        FigureCanvas = importlib.import_module("matplotlib.backends.backend_qtagg").FigureCanvasQTAgg
+        plot_backend = "matplotlib"
+    else:
+        raise RuntimeError("UI plotting backend not available. Install pyqtgraph or matplotlib.")
 
     class SeedHunter(QThread):
         status = Signal(str)
@@ -827,6 +839,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             self.run_dir = run_dir
             self.eventlog = EventLog(self.run_dir / "eventlog.jsonl")
+            self.plot_backend = plot_backend
 
             self.sim_running = False
             self.timer = QTimer(self)
@@ -941,7 +954,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.cb_showM = QCheckBox("Show M")
             self.cb_proto.setChecked(True)
             self.cb_alive.setChecked(False)
-            self.cb_showM.setChecked(True)
+            self.cb_showM.setChecked(bool(self.cfg.enable_M))
             for cb in [self.cb_proto, self.cb_alive, self.cb_showM]:
                 cb.stateChanged.connect(lambda: self.refresh_plots())
                 overlay_layout.addWidget(cb)
@@ -956,6 +969,15 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.lbl_detect = QLabel("clusters: 0 | replications: 0")
             det_layout.addWidget(self.lbl_detect)
             box.addWidget(det_group)
+
+            # -------- Phase toggles --------
+            phase_group = QGroupBox("Phase Toggles")
+            phase_layout = QVBoxLayout(phase_group)
+            self.cb_enable_m = QCheckBox("Enable M / Mutation Layer")
+            self.cb_enable_m.setChecked(self.cfg.enable_M)
+            self.cb_enable_m.stateChanged.connect(self.on_m_toggle)
+            phase_layout.addWidget(self.cb_enable_m)
+            box.addWidget(phase_group)
 
             # -------- Hunter --------
             hunt_group = QGroupBox("Hunter Agent")
@@ -1035,6 +1057,44 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         # Plots
         # -------------------------
         def _build_plots(self) -> QWidget:
+            if self.plot_backend == "pyqtgraph":
+                # Structural UI change: image panel rendering is now data-item based,
+                # so refreshes update only image buffers (faster than full-canvas redraw).
+                self.pg_layout = pg.GraphicsLayoutWidget()
+                self.pg_layout.setBackground("w")
+
+                self.plotE = self.pg_layout.addPlot(0, 0, title="E (Energy)")
+                self.plotR = self.pg_layout.addPlot(0, 1, title="R1 (Raw)")
+                self.plotS = self.pg_layout.addPlot(0, 2, title="S (Structure)")
+                self.plotM = self.pg_layout.addPlot(0, 3, title="M (Proto-Genom)")
+
+                for plot in [self.plotE, self.plotR, self.plotS, self.plotM]:
+                    plot.setAspectLocked(True)
+                    plot.hideAxis("left")
+                    plot.hideAxis("bottom")
+                    plot.invertY(True)
+
+                self.imE = pg.ImageItem(axisOrder="row-major")
+                self.imR = pg.ImageItem(axisOrder="row-major")
+                self.imS = pg.ImageItem(axisOrder="row-major")
+                self.imM = pg.ImageItem(axisOrder="row-major")
+
+                self.plotE.addItem(self.imE)
+                self.plotR.addItem(self.imR)
+                self.plotS.addItem(self.imS)
+                self.plotM.addItem(self.imM)
+
+                # Structural UI change: contour overlays become explicit isocurve items
+                # on top of S, preserving proto/alive visual toggles.
+                self._proto_curve = pg.IsocurveItem(level=0.5, pen=pg.mkPen("c", width=1))
+                self._alive_curve = pg.IsocurveItem(level=0.5, pen=pg.mkPen("lime", width=1))
+                self.plotS.addItem(self._proto_curve)
+                self.plotS.addItem(self._alive_curve)
+                self._proto_curve.hide()
+                self._alive_curve.hide()
+
+                return self.pg_layout
+
             self.fig = Figure(figsize=(13, 4), tight_layout=True)
             self.canvas = FigureCanvas(self.fig)
 
@@ -1114,4 +1174,259 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             snap = self.core.snapshot()
             path = self.run_dir / "snapshots" / f"tick_{snap.tick:09d}.npz"
             snap.save_npz(path)
-            self.eventlog.write({"t": self
+            self.eventlog.write({"t": self.core.tick, "type": "snapshot", "path": str(path)})
+
+        def on_m_toggle(self):
+            self.cfg.enable_M = self.cb_enable_m.isChecked()
+            if not self.cfg.enable_M:
+                self.core.M.fill(0.0)
+            self.refresh_plots()
+
+        def on_timer(self):
+            if not self.sim_running:
+                return
+            n = int(self.sld_speed.value())
+            for _ in range(n):
+                self.core.step()
+                self._auto_snapshot_tick()
+            self.post_step_jobs()
+            self.refresh_plots()
+
+        def _auto_snapshot_tick(self):
+            every = int(self.cfg.snapshot_every_ticks)
+            if every > 0 and (self.core.tick % every == 0):
+                self.snapshot_now()
+
+        def post_step_jobs(self):
+            self._frame_counter += 1
+            clusters = 0
+            if self.cfg.detect_enabled and (self._frame_counter % max(1, self.cfg.detect_every_n_frames) == 0):
+                labels, n_clusters = label_clusters_bool(
+                    self.core.S > self.cfg.proto_S_threshold,
+                    moore=(self.cfg.neighborhood == "moore"),
+                    torus=True,
+                )
+                clusters = n_clusters
+                fps = compute_fingerprints(self.core, labels, n_clusters)
+                rep = match_replications(
+                    self._fp_history,
+                    fps,
+                    t_now=self.core.tick,
+                    dt_max=self.cfg.detect_match_dt_ticks,
+                    sim_thr=self.cfg.detect_similarity_threshold,
+                )
+                if rep:
+                    self._replication_events += len(rep)
+                    self.eventlog.write({
+                        "t": self.core.tick,
+                        "type": "replication_detected",
+                        "count": len(rep),
+                        "pairs": rep,
+                    })
+                self._fp_history = fps
+            self.lbl_detect.setText(f"clusters: {clusters} | replications: {self._replication_events}")
+
+        def refresh_plots(self):
+            if self.plot_backend == "pyqtgraph":
+                self.imE.setImage(self.core.E, autoLevels=False)
+                self.imR.setImage(self.core.R1, autoLevels=False)
+                self.imS.setImage(self.core.S, autoLevels=False)
+                self.imM.setImage(self.core.M, autoLevels=False)
+
+                self.imE.setLevels((0.0, max(1e-6, float(self.core.E.max()))))
+                self.imR.setLevels((0.0, max(1e-6, float(self.core.R1.max()))))
+                self.imS.setLevels((0.0, max(1e-6, float(self.core.S.max()))))
+                self.imM.setLevels((0.0, 1.0))
+
+                self.plotM.setVisible(self.cb_showM.isChecked())
+
+                if self.cb_proto.isChecked():
+                    self._proto_curve.setData((self.core.S > self.cfg.proto_S_threshold).astype(np.float32))
+                    self._proto_curve.show()
+                else:
+                    self._proto_curve.hide()
+
+                if self.cb_alive.isChecked():
+                    self._alive_curve.setData((self.core.S > self.cfg.alive_S_threshold).astype(np.float32))
+                    self._alive_curve.show()
+                else:
+                    self._alive_curve.hide()
+
+                self.lbl_tick.setText(f"Tick: {self.core.tick}")
+                self.lbl_stats.setText(
+                    f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
+                    f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                )
+                self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+                return
+
+            self.imE.set_data(self.core.E)
+            self.imR.set_data(self.core.R1)
+            self.imS.set_data(self.core.S)
+            self.imM.set_data(self.core.M)
+            self.imM.set_visible(self.cb_showM.isChecked())
+            self.axM.set_visible(self.cb_showM.isChecked())
+
+            # autoscale image ranges for readability
+            self.imE.set_clim(0.0, max(1e-6, float(self.core.E.max())))
+            self.imR.set_clim(0.0, max(1e-6, float(self.core.R1.max())))
+            self.imS.set_clim(0.0, max(1e-6, float(self.core.S.max())))
+            self.imM.set_clim(0.0, 1.0)
+
+            # clear old overlays safely
+            for cont_name in ["_cont_proto", "_cont_alive"]:
+                cont = getattr(self, cont_name, None)
+                if cont is not None:
+                    for coll in cont.collections:
+                        coll.remove()
+                    setattr(self, cont_name, None)
+
+            if self.cb_proto.isChecked():
+                self._cont_proto = self.axS.contour(
+                    (self.core.S > self.cfg.proto_S_threshold).astype(np.uint8),
+                    levels=[0.5],
+                    colors=["cyan"],
+                    linewidths=0.7,
+                )
+            if self.cb_alive.isChecked():
+                self._cont_alive = self.axS.contour(
+                    (self.core.S > self.cfg.alive_S_threshold).astype(np.uint8),
+                    levels=[0.5],
+                    colors=["lime"],
+                    linewidths=0.9,
+                )
+
+            self.lbl_tick.setText(f"Tick: {self.core.tick}")
+            self.lbl_stats.setText(
+                f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
+                f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+            )
+            self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+            self.canvas.draw_idle()
+
+        def on_hunter_params(self):
+            self.hunter.target_survival = int(self.spn_target_surv.value())
+            self.hunter.max_ticks = int(self.spn_max_ticks.value())
+            self.hunter.batch = int(self.spn_batch.value())
+
+        def toggle_hunter(self):
+            if self.hunter.isRunning():
+                self.hunter.stop()
+                self.hunter.wait(500)
+                self.btn_hunt.setText("HUNT: OFF")
+                self.cfg.hunter_enabled = False
+                return
+            self.on_hunter_params()
+            self.hunter.start()
+            self.btn_hunt.setText("HUNT: ON")
+            self.cfg.hunter_enabled = True
+
+        def on_hunter_status(self, msg: str):
+            self.lbl_hunt_status.setText(msg)
+            if "stopped" in msg.lower() and self.btn_hunt.text() != "HUNT: OFF":
+                self.btn_hunt.setText("HUNT: OFF")
+
+        def on_hunter_found(self, summary_path: str):
+            self.scan_inbox()
+            self.lbl_hunt_status.setText(f"Hunter found anomaly: {summary_path}")
+
+        def on_hunter_stats(self, tested: int, found: int):
+            self.lbl_hunt_stats.setText(f"tested: {tested} | found: {found}")
+
+        def scan_inbox(self):
+            base = Path(self.cfg.hunter_anomalies_dir)
+            ensure_dir(base)
+            q = self.txt_filter.text().strip().lower() if hasattr(self, "txt_filter") else ""
+
+            self.lst_inbox.clear()
+            items = []
+            for summary in sorted(base.glob('*/summary.json'), key=lambda p: p.stat().st_mtime, reverse=True):
+                try:
+                    data = json.loads(summary.read_text(encoding='utf-8'))
+                except Exception:
+                    continue
+                text = (
+                    f"seed={data.get('seed')} | reason={data.get('reason')} | "
+                    f"surv={data.get('survival_ticks')} | tick={data.get('end_tick')}"
+                )
+                if q and q not in text.lower():
+                    continue
+                items.append((text, str(summary)))
+
+            for text, path in items:
+                it = QListWidgetItem(text)
+                it.setData(Qt.UserRole, path)
+                self.lst_inbox.addItem(it)
+
+            if not items:
+                self.lbl_inbox_detail.setText("Inbox empty.")
+
+        def on_inbox_double_click(self, item):
+            path = Path(str(item.data(Qt.UserRole)))
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+                end_path = data.get('paths', {}).get('end')
+                if not end_path:
+                    return
+                snap = Snapshot.load_npz(Path(end_path))
+                self.core.load_snapshot(snap)
+                self.cfg = self.core.cfg
+                self.cb_enable_m.setChecked(bool(self.cfg.enable_M))
+                self._fp_history.clear()
+                self._replication_events = 0
+                self.eventlog.write({"t": self.core.tick, "type": "load_anomaly", "summary": str(path)})
+                self.lbl_inbox_detail.setText(
+                    f"Loaded seed={data.get('seed')} reason={data.get('reason')} "
+                    f"survival={data.get('survival_ticks')}"
+                )
+                self.refresh_plots()
+            except Exception as exc:
+                self.lbl_inbox_detail.setText(f"Failed to load: {exc}")
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    w = GenesisCockpit()
+    w.resize(1600, 700)
+    w.show()
+    app.exec()
+
+
+def run_headless(cfg: WorldConfig, seed: int, ticks: int, run_dir: Path) -> None:
+    core = PhysicsCore(cfg, seed=seed)
+    eventlog = EventLog(run_dir / "eventlog.jsonl")
+    for _ in range(int(ticks)):
+        core.step()
+        every = int(cfg.snapshot_every_ticks)
+        if every > 0 and (core.tick % every == 0):
+            snap = core.snapshot()
+            path = run_dir / "snapshots" / f"tick_{snap.tick:09d}.npz"
+            snap.save_npz(path)
+            eventlog.write({"t": core.tick, "type": "snapshot", "path": str(path)})
+    eventlog.write({"t": core.tick, "type": "headless_done", "hash": core.state_hash()})
+    eventlog.close()
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Genesis Monolith")
+    p.add_argument("--seed", type=int, default=12345)
+    p.add_argument("--size", type=int, default=256)
+    p.add_argument("--headless", action="store_true")
+    p.add_argument("--ticks", type=int, default=20000)
+    p.add_argument("--snapshot-every", type=int, default=2000)
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = WorldConfig(size=int(args.size), snapshot_every_ticks=int(args.snapshot_every))
+
+    run_dir = ensure_dir(Path(cfg.out_dir) / now_id())
+    (run_dir / "snapshots").mkdir(parents=True, exist_ok=True)
+
+    if args.headless:
+        run_headless(cfg, seed=int(args.seed), ticks=int(args.ticks), run_dir=run_dir)
+    else:
+        run_ui(cfg, seed=int(args.seed), run_dir=run_dir)
+
+
+if __name__ == "__main__":
+    main()
