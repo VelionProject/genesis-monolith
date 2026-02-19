@@ -2,7 +2,7 @@
 # Genesis v1.4+ — Monolith + Hunter Agent + Anomaly Inbox (UI-first, no tkinter)
 #
 # Requirements:
-#   pip install numpy PySide6 matplotlib
+#   pip install numpy PySide6 pyqtgraph matplotlib
 #
 # Run UI:
 #   python Monolith.py
@@ -691,6 +691,9 @@ def _seed_stream(rng: np.random.Generator, count: int) -> List[int]:
 # =========================
 
 def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
+    import importlib
+    import importlib.util
+
     from PySide6.QtCore import Qt, QTimer, QThread, Signal
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget,
@@ -698,8 +701,22 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         QSlider, QLabel, QCheckBox, QGroupBox, QSpinBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit
     )
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
+    # Renderer selection (UI-only): prefer PyQtGraph for high-frequency image updates,
+    # keep Matplotlib as a compatibility fallback if PyQtGraph is not installed.
+    pg = None
+    Figure = None
+    FigureCanvas = None
+    plot_backend = "none"
+    if importlib.util.find_spec("pyqtgraph") is not None:
+        pg = importlib.import_module("pyqtgraph")
+        plot_backend = "pyqtgraph"
+    elif importlib.util.find_spec("matplotlib") is not None:
+        Figure = importlib.import_module("matplotlib.figure").Figure
+        FigureCanvas = importlib.import_module("matplotlib.backends.backend_qtagg").FigureCanvasQTAgg
+        plot_backend = "matplotlib"
+    else:
+        raise RuntimeError("UI plotting backend not available. Install pyqtgraph or matplotlib.")
 
     class SeedHunter(QThread):
         status = Signal(str)
@@ -822,6 +839,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             self.run_dir = run_dir
             self.eventlog = EventLog(self.run_dir / "eventlog.jsonl")
+            self.plot_backend = plot_backend
 
             self.sim_running = False
             self.timer = QTimer(self)
@@ -1039,6 +1057,44 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         # Plots
         # -------------------------
         def _build_plots(self) -> QWidget:
+            if self.plot_backend == "pyqtgraph":
+                # Structural UI change: image panel rendering is now data-item based,
+                # so refreshes update only image buffers (faster than full-canvas redraw).
+                self.pg_layout = pg.GraphicsLayoutWidget()
+                self.pg_layout.setBackground("w")
+
+                self.plotE = self.pg_layout.addPlot(0, 0, title="E (Energy)")
+                self.plotR = self.pg_layout.addPlot(0, 1, title="R1 (Raw)")
+                self.plotS = self.pg_layout.addPlot(0, 2, title="S (Structure)")
+                self.plotM = self.pg_layout.addPlot(0, 3, title="M (Proto-Genom)")
+
+                for plot in [self.plotE, self.plotR, self.plotS, self.plotM]:
+                    plot.setAspectLocked(True)
+                    plot.hideAxis("left")
+                    plot.hideAxis("bottom")
+                    plot.invertY(True)
+
+                self.imE = pg.ImageItem(axisOrder="row-major")
+                self.imR = pg.ImageItem(axisOrder="row-major")
+                self.imS = pg.ImageItem(axisOrder="row-major")
+                self.imM = pg.ImageItem(axisOrder="row-major")
+
+                self.plotE.addItem(self.imE)
+                self.plotR.addItem(self.imR)
+                self.plotS.addItem(self.imS)
+                self.plotM.addItem(self.imM)
+
+                # Structural UI change: contour overlays become explicit isocurve items
+                # on top of S, preserving proto/alive visual toggles.
+                self._proto_curve = pg.IsocurveItem(level=0.5, pen=pg.mkPen("c", width=1))
+                self._alive_curve = pg.IsocurveItem(level=0.5, pen=pg.mkPen("lime", width=1))
+                self.plotS.addItem(self._proto_curve)
+                self.plotS.addItem(self._alive_curve)
+                self._proto_curve.hide()
+                self._alive_curve.hide()
+
+                return self.pg_layout
+
             self.fig = Figure(figsize=(13, 4), tight_layout=True)
             self.canvas = FigureCanvas(self.fig)
 
@@ -1171,6 +1227,39 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.lbl_detect.setText(f"clusters: {clusters} | replications: {self._replication_events}")
 
         def refresh_plots(self):
+            if self.plot_backend == "pyqtgraph":
+                self.imE.setImage(self.core.E, autoLevels=False)
+                self.imR.setImage(self.core.R1, autoLevels=False)
+                self.imS.setImage(self.core.S, autoLevels=False)
+                self.imM.setImage(self.core.M, autoLevels=False)
+
+                self.imE.setLevels((0.0, max(1e-6, float(self.core.E.max()))))
+                self.imR.setLevels((0.0, max(1e-6, float(self.core.R1.max()))))
+                self.imS.setLevels((0.0, max(1e-6, float(self.core.S.max()))))
+                self.imM.setLevels((0.0, 1.0))
+
+                self.plotM.setVisible(self.cb_showM.isChecked())
+
+                if self.cb_proto.isChecked():
+                    self._proto_curve.setData((self.core.S > self.cfg.proto_S_threshold).astype(np.float32))
+                    self._proto_curve.show()
+                else:
+                    self._proto_curve.hide()
+
+                if self.cb_alive.isChecked():
+                    self._alive_curve.setData((self.core.S > self.cfg.alive_S_threshold).astype(np.float32))
+                    self._alive_curve.show()
+                else:
+                    self._alive_curve.hide()
+
+                self.lbl_tick.setText(f"Tick: {self.core.tick}")
+                self.lbl_stats.setText(
+                    f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
+                    f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                )
+                self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+                return
+
             self.imE.set_data(self.core.E)
             self.imR.set_data(self.core.R1)
             self.imS.set_data(self.core.S)
@@ -1327,7 +1416,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = pa
+    args = parse_args()
+    cfg = WorldConfig(size=int(args.size), snapshot_every_ticks=int(args.snapshot_every))
 
     run_dir = ensure_dir(Path(cfg.out_dir) / now_id())
     (run_dir / "snapshots").mkdir(parents=True, exist_ok=True)

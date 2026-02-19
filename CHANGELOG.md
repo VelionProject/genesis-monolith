@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.0.2] - 2026-02-19
+### Changed
+- UI plotting now prefers PyQtGraph for high-frequency cockpit refreshes and falls back to Matplotlib if PyQtGraph is unavailable.
+- Reworked the plotting pipeline to support backend-specific refresh logic while preserving overlays, M-visibility toggles, and status readouts.
+
 ## [0.0.1] - 2026-02-19
 ### Fixed
 - Recovered `Monolith.py` from a truncated `snapshot_now()` method that caused a hard syntax failure and prevented startup.
