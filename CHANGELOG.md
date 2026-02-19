@@ -1,8 +1,5 @@
 # Changelog
 
-## [0.0.4] - 2026-02-19
-### Fixed
-- Hardened PyQtGraph LUT initialization in cockpit plots: colormaps are now resolved defensively with `pg.colormap` when available and fallback `pg.ColorMap` gradients otherwise, preventing startup/runtime errors on older/incomplete PyQtGraph builds.
 
 ## [0.0.3] - 2026-02-19
 ### Changed

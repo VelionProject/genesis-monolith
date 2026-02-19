@@ -1089,23 +1089,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.imM = pg.ImageItem(axisOrder="row-major")
 
                 # Structural UI change: dedicated LUTs increase channel contrast readability.
-                # Compatibility note: pyqtgraph builds differ in available colormap APIs/names,
-                # so we resolve LUTs defensively and fall back to stable ColorMap gradients.
-                def _resolve_lut(name: str, fallback_stops):
-                    cmap_api = getattr(pg, "colormap", None)
-                    if cmap_api is not None:
-                        cmap = cmap_api.get(name)
-                        if cmap is not None:
-                            return cmap.getLookupTable()
-                    return pg.ColorMap(
-                        pos=np.linspace(0.0, 1.0, len(fallback_stops)),
-                        color=fallback_stops,
-                    ).getLookupTable()
 
-                self.imE.setLookupTable(_resolve_lut("inferno", [(0, 0, 0), (180, 30, 40), (255, 220, 70)]))
-                self.imR.setLookupTable(_resolve_lut("viridis", [(68, 1, 84), (32, 144, 140), (253, 231, 37)]))
-                self.imS.setLookupTable(_resolve_lut("magma", [(0, 0, 0), (120, 30, 110), (252, 253, 191)]))
-                self.imM.setLookupTable(_resolve_lut("winter", [(0, 0, 130), (0, 180, 255), (180, 255, 255)]))
 
                 self.plotE.addItem(self.imE)
                 self.plotR.addItem(self.imR)
