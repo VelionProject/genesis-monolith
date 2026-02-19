@@ -1327,8 +1327,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
-    cfg = WorldConfig(size=int(args.size), snapshot_every_ticks=int(args.snapshot_every), hunter_enabled=False)
+    args = pa
 
     run_dir = ensure_dir(Path(cfg.out_dir) / now_id())
     (run_dir / "snapshots").mkdir(parents=True, exist_ok=True)

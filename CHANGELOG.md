@@ -9,9 +9,3 @@
 - Phase-0 defaults now start with mutation/proto-genome (`enable_M`) disabled.
 - Added a GUI toggle for enabling/disabling the M/mutation layer at runtime.
 - Kept Hunter agent runtime-toggle behavior and default-off startup behavior aligned with the recovery scope.
-
-## [0.0.2] - 2026-02-19
-### Changed
-- Aligned `Monolith.py` top-level run instructions with the current executable filename and currently supported CLI flags.
-- Removed a contradictory internal comment that claimed there was no CLI path.
-- Simplified startup config by removing a redundant runtime override for `enable_M` (now sourced from `WorldConfig` defaults).
