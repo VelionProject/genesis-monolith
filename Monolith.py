@@ -1089,10 +1089,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.imM = pg.ImageItem(axisOrder="row-major")
 
                 # Structural UI change: dedicated LUTs increase channel contrast readability.
-                self.imE.setLookupTable(pg.colormap.get("inferno").getLookupTable())
-                self.imR.setLookupTable(pg.colormap.get("viridis").getLookupTable())
-                self.imS.setLookupTable(pg.colormap.get("magma").getLookupTable())
-                self.imM.setLookupTable(pg.colormap.get("winter").getLookupTable())
+
 
                 self.plotE.addItem(self.imE)
                 self.plotR.addItem(self.imR)

@@ -1,5 +1,6 @@
 # Changelog
 
+
 ## [0.0.3] - 2026-02-19
 ### Changed
 - Updated PyQtGraph cockpit plots to dark-mode styling with high-contrast titles and fixed (non-pan/zoom) grid interaction.
