@@ -1061,23 +1061,51 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 # Structural UI change: image panel rendering is now data-item based,
                 # so refreshes update only image buffers (faster than full-canvas redraw).
                 self.pg_layout = pg.GraphicsLayoutWidget()
-                self.pg_layout.setBackground("w")
+                # Structural UI change: dark-mode plot canvas and fixed-grid behavior improve
+                # visibility and prevent accidental panning/zooming interactions.
+                self.pg_layout.setBackground("k")
 
-                self.plotE = self.pg_layout.addPlot(0, 0, title="E (Energy)")
-                self.plotR = self.pg_layout.addPlot(0, 1, title="R1 (Raw)")
-                self.plotS = self.pg_layout.addPlot(0, 2, title="S (Structure)")
-                self.plotM = self.pg_layout.addPlot(0, 3, title="M (Proto-Genom)")
+                title_style = {"color": "#E6E6E6"}
+                self.plotE = self.pg_layout.addPlot(0, 0)
+                self.plotR = self.pg_layout.addPlot(0, 1)
+                self.plotS = self.pg_layout.addPlot(0, 2)
+                self.plotM = self.pg_layout.addPlot(0, 3)
+                self.plotE.setTitle("E (Energy)", **title_style)
+                self.plotR.setTitle("R1 (Raw)", **title_style)
+                self.plotS.setTitle("S (Structure)", **title_style)
+                self.plotM.setTitle("M (Proto-Genom)", **title_style)
 
                 for plot in [self.plotE, self.plotR, self.plotS, self.plotM]:
                     plot.setAspectLocked(True)
                     plot.hideAxis("left")
                     plot.hideAxis("bottom")
                     plot.invertY(True)
+                    plot.setMouseEnabled(x=False, y=False)
+                    plot.hideButtons()
 
                 self.imE = pg.ImageItem(axisOrder="row-major")
                 self.imR = pg.ImageItem(axisOrder="row-major")
                 self.imS = pg.ImageItem(axisOrder="row-major")
                 self.imM = pg.ImageItem(axisOrder="row-major")
+
+                # Structural UI change: dedicated LUTs increase channel contrast readability.
+                # Compatibility note: pyqtgraph builds differ in available colormap APIs/names,
+                # so we resolve LUTs defensively and fall back to stable ColorMap gradients.
+                def _resolve_lut(name: str, fallback_stops):
+                    cmap_api = getattr(pg, "colormap", None)
+                    if cmap_api is not None:
+                        cmap = cmap_api.get(name)
+                        if cmap is not None:
+                            return cmap.getLookupTable()
+                    return pg.ColorMap(
+                        pos=np.linspace(0.0, 1.0, len(fallback_stops)),
+                        color=fallback_stops,
+                    ).getLookupTable()
+
+                self.imE.setLookupTable(_resolve_lut("inferno", [(0, 0, 0), (180, 30, 40), (255, 220, 70)]))
+                self.imR.setLookupTable(_resolve_lut("viridis", [(68, 1, 84), (32, 144, 140), (253, 231, 37)]))
+                self.imS.setLookupTable(_resolve_lut("magma", [(0, 0, 0), (120, 30, 110), (252, 253, 191)]))
+                self.imM.setLookupTable(_resolve_lut("winter", [(0, 0, 130), (0, 180, 255), (180, 255, 255)]))
 
                 self.plotE.addItem(self.imE)
                 self.plotR.addItem(self.imR)
@@ -1228,14 +1256,18 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
         def refresh_plots(self):
             if self.plot_backend == "pyqtgraph":
+                v_max_E = max(1e-6, float(self.core.E.max()))
+                v_max_R1 = max(1e-6, float(self.core.R1.max()))
+                v_max_S = max(1e-6, float(self.core.S.max()))
+
                 self.imE.setImage(self.core.E, autoLevels=False)
                 self.imR.setImage(self.core.R1, autoLevels=False)
                 self.imS.setImage(self.core.S, autoLevels=False)
                 self.imM.setImage(self.core.M, autoLevels=False)
 
-                self.imE.setLevels((0.0, max(1e-6, float(self.core.E.max()))))
-                self.imR.setLevels((0.0, max(1e-6, float(self.core.R1.max()))))
-                self.imS.setLevels((0.0, max(1e-6, float(self.core.S.max()))))
+                self.imE.setLevels((0.0, v_max_E))
+                self.imR.setLevels((0.0, v_max_R1))
+                self.imS.setLevels((0.0, v_max_S))
                 self.imM.setLevels((0.0, 1.0))
 
                 self.plotM.setVisible(self.cb_showM.isChecked())
