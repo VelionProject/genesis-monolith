@@ -1,21 +1,18 @@
-# genesis_monolith.py
+# Monolith.py
 # Genesis v1.4+ — Monolith + Hunter Agent + Anomaly Inbox (UI-first, no tkinter)
 #
 # Requirements:
 #   pip install numpy PySide6 matplotlib
 #
 # Run UI:
-#   python genesis_monolith.py
+#   python Monolith.py
 #
 # Headless:
-#   python genesis_monolith.py --headless --ticks 200000 --snapshot-every 5000
+#   python Monolith.py --headless --ticks 200000 --snapshot-every 5000
 #
-# Replay:
-#   python genesis_monolith.py --replay runs/<runid>/snapshots/tick_000050000.npz --ticks 20000
-#
-# Sweep (grid search):
-#   python genesis_monolith.py --sweep --ticks 60000 --seeds 12345,222,333 \
-#       --grid "k2:0.015,0.02,0.03;energy_strength:0.02,0.03;M_mut_sigma:0.01,0.02"
+# Note:
+#   CLI currently supports seed/size/headless/ticks/snapshot-every.
+#   Replay/sweep commands are planned for a later milestone.
 #
 # NEW (UI):
 #   - Hunter Agent ON/OFF: brute-force seeds in background
@@ -681,7 +678,6 @@ def save_anomaly_bundle(
     return out
 
 # UI-side thread agent
-# remembered: no CLI; runs background; only drops anomaly bundles.
 def _seed_stream(rng: np.random.Generator, count: int) -> List[int]:
     return [int(rng.integers(0, 2**31 - 1)) for _ in range(count)]
 
@@ -1331,8 +1327,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
-    cfg = WorldConfig(size=int(args.size), snapshot_every_ticks=int(args.snapshot_every), enable_M=False, hunter_enabled=False)
+    args = pa
 
     run_dir = ensure_dir(Path(cfg.out_dir) / now_id())
     (run_dir / "snapshots").mkdir(parents=True, exist_ok=True)
