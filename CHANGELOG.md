@@ -3,6 +3,17 @@
 
 
 
+## [0.0.8] - 2026-02-21
+### Changed
+- Auto-run speed slider now supports `1..1000` ticks/frame (instead of starting at 50) and defaults to `1` tick/frame for safer low-load startup behavior.
+
+## [0.0.7] - 2026-02-21
+### Fixed
+- Stabilized UI auto-run by adding a re-entrancy guard around the timer tick handler so expensive frames cannot overlap and freeze/crash the cockpit update loop.
+
+### Added
+- Extended the sidebar Step controls with a custom tick input (`QSpinBox`) and dedicated Run button for manual stepping beyond ×1/×10/×100 presets.
+
 ## [0.0.6] - 2026-02-21
 ### Added
 - Added a standalone `tests/` suite with deterministic core checks (`test_determinism.py`), mass bounds sanity checks (`test_mass.py`), snapshot roundtrip validation (`test_snapshot.py`), and NaN/Inf stability checks (`test_no_nan.py`).

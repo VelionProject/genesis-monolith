@@ -922,6 +922,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.timer = QTimer(self)
             self.timer.setInterval(16)
             self.timer.timeout.connect(self.on_timer)
+            # Structural stability change: guard against overlapping timer ticks when a previous
+            # auto-run frame is still computing, which can otherwise make GUI updates unstable.
+            self._timer_busy = False
 
             # detection state
             self._frame_counter = 0
@@ -1025,20 +1028,37 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             box.addWidget(self.btn_start)
 
             step_group = QGroupBox("Step")
-            step_layout = QHBoxLayout(step_group)
+            # Structural UI change: keep preset step buttons and add a custom tick runner in the
+            # same control group so manual stepping paths share one discoverable place.
+            step_layout = QVBoxLayout(step_group)
+            preset_row = QHBoxLayout()
             for label, n in [("×1", 1), ("×10", 10), ("×100", 100)]:
                 b = QPushButton(label)
                 b.clicked.connect(lambda _, nn=n: self.step_n(nn))
-                step_layout.addWidget(b)
+                preset_row.addWidget(b)
+            step_layout.addLayout(preset_row)
+
+            custom_row = QHBoxLayout()
+            custom_row.addWidget(QLabel("Custom:"))
+            self.spn_custom_ticks = QSpinBox()
+            self.spn_custom_ticks.setRange(1, 5_000_000)
+            self.spn_custom_ticks.setValue(500)
+            custom_row.addWidget(self.spn_custom_ticks)
+            self.btn_step_custom = QPushButton("Run")
+            self.btn_step_custom.clicked.connect(self.step_custom)
+            custom_row.addWidget(self.btn_step_custom)
+            step_layout.addLayout(custom_row)
             box.addWidget(step_group)
 
             box.addWidget(QLabel("Speed (Ticks per Frame):"))
             self.sld_speed = QSlider(Qt.Horizontal)
-            self.sld_speed.setRange(50, 1000)
-            self.sld_speed.setValue(200)
+            # Structural UI change: allow fine-grained auto-run control down to 1 tick/frame and
+            # default to the safest low-load value to reduce bursty frame pressure at startup.
+            self.sld_speed.setRange(1, 1000)
+            self.sld_speed.setValue(1)
             self.sld_speed.valueChanged.connect(self.on_speed_changed)
             box.addWidget(self.sld_speed)
-            self.lbl_speed = QLabel("ticks_per_frame: 200")
+            self.lbl_speed = QLabel("ticks_per_frame: 1")
             box.addWidget(self.lbl_speed)
 
             reset_group = QGroupBox("World")
@@ -1277,6 +1297,14 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         def step_n(self, n: int):
             self.sim_running = False
             self.btn_start.setText("START")
+            self._advance_ticks(int(n))
+
+        def step_custom(self):
+            self.step_n(int(self.spn_custom_ticks.value()))
+
+        def _advance_ticks(self, n: int):
+            # Structural logic change: centralize stepping side effects so manual and auto paths
+            # use exactly the same snapshot/detection/refresh sequence.
             for _ in range(n):
                 self.core.step()
                 self._auto_snapshot_tick()
@@ -1314,14 +1342,14 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.refresh_plots()
 
         def on_timer(self):
-            if not self.sim_running:
+            if not self.sim_running or self._timer_busy:
                 return
-            n = int(self.sld_speed.value())
-            for _ in range(n):
-                self.core.step()
-                self._auto_snapshot_tick()
-            self.post_step_jobs()
-            self.refresh_plots()
+            self._timer_busy = True
+            try:
+                n = int(self.sld_speed.value())
+                self._advance_ticks(n)
+            finally:
+                self._timer_busy = False
 
         def _auto_snapshot_tick(self):
             every = int(self.cfg.snapshot_every_ticks)
