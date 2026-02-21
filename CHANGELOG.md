@@ -1,6 +1,15 @@
 # Changelog
 
 
+## [0.0.5] - 2026-02-21
+### Changed
+- Hunter tested-seed persistence now uses a compact SQLite cache (`runs/anomalies/tested_seeds.sqlite3`) with in-place updates (`INSERT OR IGNORE`) instead of a growing text log.
+- Added one-time migration from legacy `tested_seeds.log` to SQLite and automatic cleanup of the old log file to reduce disk usage.
+
+## [0.0.4] - 2026-02-20
+### Changed
+- Hunter now persists a `tested_seeds.log` file in `runs/anomalies` and skips already-tested seeds across runs to avoid re-testing known dead/processed seeds.
+
 ## [0.0.3] - 2026-02-19
 ### Changed
 - Updated PyQtGraph cockpit plots to dark-mode styling with high-contrast titles and fixed (non-pan/zoom) grid interaction.

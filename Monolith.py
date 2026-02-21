@@ -25,6 +25,7 @@ import json
 import time
 import argparse
 import hashlib
+import sqlite3
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -730,11 +731,77 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self._tested = 0
             self._found = 0
             self._rng = np.random.default_rng(int(time.time()) & 0x7FFFFFFF)
+            self._tested_seeds_db_path: Optional[Path] = None
+            self._tested_seed_conn: Optional[sqlite3.Connection] = None
 
             # dynamic settings (UI can update)
             self.target_survival = base_cfg.hunter_target_survival_ticks
             self.max_ticks = base_cfg.hunter_max_ticks_per_seed
             self.batch = base_cfg.hunter_seeds_per_batch
+
+        # Structural change: use a compact SQLite cache (single file) instead of ever-growing text logs.
+        def _init_seed_cache(self, anomalies_dir: Path) -> None:
+            self._tested_seeds_db_path = anomalies_dir / "tested_seeds.sqlite3"
+            conn = sqlite3.connect(self._tested_seeds_db_path)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("CREATE TABLE IF NOT EXISTS tested_seeds (seed INTEGER PRIMARY KEY)")
+
+            # Structural change: migrate legacy text log once into SQLite and remove it to save disk space.
+            legacy_log = anomalies_dir / "tested_seeds.log"
+            if legacy_log.exists():
+                for line in legacy_log.read_text(encoding="utf-8").splitlines():
+                    val = line.strip()
+                    if not val:
+                        continue
+                    conn.execute(
+                        "INSERT OR IGNORE INTO tested_seeds(seed) VALUES (?)",
+                        (int(val),),
+                    )
+                conn.commit()
+                legacy_log.unlink(missing_ok=True)
+
+            self._tested_seed_conn = conn
+
+        # Structural change: cache update is in-place (INSERT OR IGNORE) and persists across restarts.
+        def _mark_seed_tested(self, seed: int) -> None:
+            if self._tested_seed_conn is None:
+                return
+            self._tested_seed_conn.execute(
+                "INSERT OR IGNORE INTO tested_seeds(seed) VALUES (?)",
+                (int(seed),),
+            )
+            self._tested_seed_conn.commit()
+
+        # Structural change: membership check goes directly against persistent cache to avoid re-testing seeds.
+        def _seed_was_tested(self, seed: int) -> bool:
+            if self._tested_seed_conn is None:
+                return False
+            row = self._tested_seed_conn.execute(
+                "SELECT 1 FROM tested_seeds WHERE seed=? LIMIT 1",
+                (int(seed),),
+            ).fetchone()
+            return row is not None
+
+        # Structural change: generate unique candidate seeds while skipping those already in the persistent cache.
+        def _seed_batch_unique(self) -> List[int]:
+            unique: List[int] = []
+            target = max(1, int(self.batch))
+            while len(unique) < target:
+                candidate = int(self._rng.integers(0, 2**31 - 1))
+                if candidate in unique:
+                    continue
+                if self._seed_was_tested(candidate):
+                    continue
+                unique.append(candidate)
+            return unique
+
+        # Structural change: explicit cache close keeps sqlite file consistent when hunter stops.
+        def _close_seed_cache(self) -> None:
+            if self._tested_seed_conn is None:
+                return
+            self._tested_seed_conn.close()
+            self._tested_seed_conn = None
 
         def stop(self):
             self._running = False
@@ -743,91 +810,100 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self._running = True
             anomalies_dir = Path(self.base_cfg.hunter_anomalies_dir)
             ensure_dir(anomalies_dir)
+            self._init_seed_cache(anomalies_dir)
+            known_tested = 0
+            if self._tested_seed_conn is not None:
+                known_tested = int(self._tested_seed_conn.execute("SELECT COUNT(*) FROM tested_seeds").fetchone()[0])
 
-            self.status.emit("Hunter: running")
-            while self._running:
-                seeds = _seed_stream(self._rng, max(1, int(self.batch)))
-                for sd in seeds:
-                    if not self._running:
-                        break
-
-                    # fresh core per seed (deterministic run)
-                    c = WorldConfig(**asdict(self.base_cfg))
-                    core = PhysicsCore(c, seed=sd)
-
-                    birth_tick = None
-                    birth_snap = None
-                    alive_started = False
-                    alive_start_tick = None
-
-                    # run loop
-                    for _ in range(int(self.max_ticks)):
+            self.status.emit(f"Hunter: running (known_tested={known_tested})")
+            try:
+                while self._running:
+                    seeds = self._seed_batch_unique()
+                    for sd in seeds:
                         if not self._running:
                             break
-                        core.step()
 
-                        # detect "alive" by alive threshold area
-                        area_alive, smax = alive_score(core, c.alive_S_threshold)
-                        if (not alive_started) and (area_alive > 0):
-                            alive_started = True
-                            alive_start_tick = core.tick
-                            birth_tick = core.tick
-                            birth_snap = core.snapshot()
+                        # fresh core per seed (deterministic run)
+                        c = WorldConfig(**asdict(self.base_cfg))
+                        core = PhysicsCore(c, seed=sd)
 
-                        # success: survived target ticks since first alive
-                        if alive_started and alive_start_tick is not None:
-                            if (core.tick - alive_start_tick) >= int(self.target_survival):
-                                last_snap = core.snapshot()
-                                reason = "SURVIVED_TARGET"
-                                out = save_anomaly_bundle(
-                                    base_dir=anomalies_dir,
-                                    cfg=c,
-                                    seed=sd,
-                                    birth_snap=birth_snap,
-                                    last_snap=last_snap,
-                                    survival_ticks=int(core.tick - alive_start_tick),
-                                    birth_tick=birth_tick,
-                                    reason=reason
-                                )
-                                self._found += 1
-                                self._tested += 1
-                                self.stats.emit(self._tested, self._found)
-                                self.found.emit(str(out / "summary.json"))
-                                self.status.emit(f"Hunter: FOUND seed={sd} survived={core.tick - alive_start_tick}")
+                        birth_tick = None
+                        birth_snap = None
+                        alive_started = False
+                        alive_start_tick = None
+
+                        # run loop
+                        for _ in range(int(self.max_ticks)):
+                            if not self._running:
                                 break
+                            core.step()
 
-                        # failure after having been alive: died out (no proto area)
-                        if alive_started:
-                            area_proto = int((core.S > c.proto_S_threshold).sum())
-                            if area_proto == 0:
-                                last_snap = core.snapshot()
-                                reason = quick_reason(core, c)
-                                out = save_anomaly_bundle(
-                                    base_dir=anomalies_dir,
-                                    cfg=c,
-                                    seed=sd,
-                                    birth_snap=birth_snap,
-                                    last_snap=last_snap,
-                                    survival_ticks=int(core.tick - (alive_start_tick or core.tick)),
-                                    birth_tick=birth_tick,
-                                    reason=reason
-                                )
-                                self._found += 1
-                                self._tested += 1
-                                self.stats.emit(self._tested, self._found)
-                                self.found.emit(str(out / "summary.json"))
-                                self.status.emit(f"Hunter: anomaly seed={sd} reason={reason}")
-                                break
+                            # detect "alive" by alive threshold area
+                            area_alive, smax = alive_score(core, c.alive_S_threshold)
+                            if (not alive_started) and (area_alive > 0):
+                                alive_started = True
+                                alive_start_tick = core.tick
+                                birth_tick = core.tick
+                                birth_snap = core.snapshot()
 
-                    # if no anomaly found, just count as tested
-                    if self._running:
-                        self._tested += 1
-                        self.stats.emit(self._tested, self._found)
+                            # success: survived target ticks since first alive
+                            if alive_started and alive_start_tick is not None:
+                                if (core.tick - alive_start_tick) >= int(self.target_survival):
+                                    last_snap = core.snapshot()
+                                    reason = "SURVIVED_TARGET"
+                                    out = save_anomaly_bundle(
+                                        base_dir=anomalies_dir,
+                                        cfg=c,
+                                        seed=sd,
+                                        birth_snap=birth_snap,
+                                        last_snap=last_snap,
+                                        survival_ticks=int(core.tick - alive_start_tick),
+                                        birth_tick=birth_tick,
+                                        reason=reason
+                                    )
+                                    self._found += 1
+                                    self._tested += 1
+                                    self._mark_seed_tested(sd)
+                                    self.stats.emit(self._tested, self._found)
+                                    self.found.emit(str(out / "summary.json"))
+                                    self.status.emit(f"Hunter: FOUND seed={sd} survived={core.tick - alive_start_tick}")
+                                    break
 
-                # tiny breather so UI stays snappy
-                self.msleep(15)
+                            # failure after having been alive: died out (no proto area)
+                            if alive_started:
+                                area_proto = int((core.S > c.proto_S_threshold).sum())
+                                if area_proto == 0:
+                                    last_snap = core.snapshot()
+                                    reason = quick_reason(core, c)
+                                    out = save_anomaly_bundle(
+                                        base_dir=anomalies_dir,
+                                        cfg=c,
+                                        seed=sd,
+                                        birth_snap=birth_snap,
+                                        last_snap=last_snap,
+                                        survival_ticks=int(core.tick - (alive_start_tick or core.tick)),
+                                        birth_tick=birth_tick,
+                                        reason=reason
+                                    )
+                                    self._found += 1
+                                    self._tested += 1
+                                    self._mark_seed_tested(sd)
+                                    self.stats.emit(self._tested, self._found)
+                                    self.found.emit(str(out / "summary.json"))
+                                    self.status.emit(f"Hunter: anomaly seed={sd} reason={reason}")
+                                    break
 
-            self.status.emit("Hunter: stopped")
+                        # if no anomaly found, just count as tested
+                        if self._running:
+                            self._tested += 1
+                            self._mark_seed_tested(sd)
+                            self.stats.emit(self._tested, self._found)
+
+                    # tiny breather so UI stays snappy
+                    self.msleep(15)
+            finally:
+                self._close_seed_cache()
+                self.status.emit("Hunter: stopped")
 
     class GenesisCockpit(QMainWindow):
         def __init__(self):
