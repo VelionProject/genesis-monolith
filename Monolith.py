@@ -1500,18 +1500,22 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             path = Path(str(item.data(Qt.UserRole)))
             try:
                 data = json.loads(path.read_text(encoding='utf-8'))
-                end_path = data.get('paths', {}).get('end')
-                if not end_path:
+                # Structural UI change: prefer the first alive snapshot (birth) when loading inbox items,
+                # and only fall back to the end/death snapshot if birth data is unavailable.
+                paths = data.get('paths', {})
+                preferred_path = paths.get('birth') or paths.get('end')
+                if not preferred_path:
                     return
-                snap = Snapshot.load_npz(Path(end_path))
+                snap = Snapshot.load_npz(Path(preferred_path))
                 self.core.load_snapshot(snap)
                 self.cfg = self.core.cfg
                 self.cb_enable_m.setChecked(bool(self.cfg.enable_M))
                 self._fp_history.clear()
                 self._replication_events = 0
                 self.eventlog.write({"t": self.core.tick, "type": "load_anomaly", "summary": str(path)})
+                loaded_kind = "birth" if paths.get('birth') else "end"
                 self.lbl_inbox_detail.setText(
-                    f"Loaded seed={data.get('seed')} reason={data.get('reason')} "
+                    f"Loaded ({loaded_kind}) seed={data.get('seed')} reason={data.get('reason')} "
                     f"survival={data.get('survival_ticks')}"
                 )
                 self.refresh_plots()
