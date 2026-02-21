@@ -700,7 +700,8 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         QApplication, QMainWindow, QWidget,
         QHBoxLayout, QVBoxLayout, QPushButton,
         QSlider, QLabel, QCheckBox, QGroupBox, QSpinBox,
-        QListWidget, QListWidgetItem, QSplitter, QLineEdit
+        QListWidget, QListWidgetItem, QSplitter, QLineEdit,
+        QScrollArea
     )
 
     # Renderer selection (UI-only): prefer PyQtGraph for high-frequency image updates,
@@ -937,20 +938,50 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             central = QWidget()
             self.setCentralWidget(central)
 
-            splitter = QSplitter(Qt.Horizontal)
-            root = QHBoxLayout(central)
-            root.addWidget(splitter)
+            # Structural UI change: vertical root layout allows a persistent bottom toggle button
+            # while keeping main content inside a resize-aware splitter.
+            root = QVBoxLayout(central)
 
+            self.splitter = QSplitter(Qt.Horizontal)
+            self.splitter.setChildrenCollapsible(False)
+            root.addWidget(self.splitter, 1)
+
+            # Structural UI change: dedicated sidebar panel + scroll area prevents clipping when
+            # controls grow and keeps future sidebar extensions safe.
             self.sidebar = QWidget()
             self.sidebar_layout = QVBoxLayout(self.sidebar)
             self.sidebar_layout.setContentsMargins(8, 8, 8, 8)
 
-            splitter.addWidget(self.sidebar)
-            splitter.addWidget(self._build_plots())
-            splitter.setStretchFactor(0, 0)
-            splitter.setStretchFactor(1, 1)
+            self.sidebar_scroll = QScrollArea()
+            self.sidebar_scroll.setWidgetResizable(True)
+            self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.sidebar_scroll.setWidget(self.sidebar)
+
+            self.sidebar_panel = QWidget()
+            self.sidebar_panel_layout = QVBoxLayout(self.sidebar_panel)
+            self.sidebar_panel_layout.setContentsMargins(0, 0, 0, 0)
+            self.sidebar_panel_layout.addWidget(self.sidebar_scroll)
+            self.sidebar_panel.setMinimumWidth(360)
+
+            self.plot_panel = self._build_plots()
+            self.plot_panel.setMinimumWidth(640)
+
+            self.splitter.addWidget(self.sidebar_panel)
+            self.splitter.addWidget(self.plot_panel)
+            self.splitter.setStretchFactor(0, 0)
+            self.splitter.setStretchFactor(1, 1)
+            self.splitter.setSizes([420, 1100])
 
             self._build_sidebar()
+
+            # Structural UI change: persistent footer control keeps sidebar show/hide reachable
+            # even when the sidebar is currently hidden.
+            footer_bar = QHBoxLayout()
+            self.btn_sidebar_toggle = QPushButton("Sidebar ausblenden")
+            self.btn_sidebar_toggle.clicked.connect(self.toggle_sidebar)
+            footer_bar.addWidget(self.btn_sidebar_toggle)
+            footer_bar.addStretch(1)
+            root.addLayout(footer_bar)
 
             # inbox auto-refresh
             self.inbox_timer = QTimer(self)
@@ -969,6 +1000,18 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.eventlog.close()
             finally:
                 super().closeEvent(event)
+
+
+        # Structural UI change: toggle sidebar visibility with safe splitter resizing.
+        def toggle_sidebar(self):
+            if self.sidebar_panel.isVisible():
+                self.sidebar_panel.hide()
+                self.btn_sidebar_toggle.setText("Sidebar einblenden")
+            else:
+                self.sidebar_panel.show()
+                self.btn_sidebar_toggle.setText("Sidebar ausblenden")
+                # Restore readable default ratio after re-showing the sidebar.
+                self.splitter.setSizes([420, 1100])
 
         # -------------------------
         # Sidebar

@@ -1,6 +1,7 @@
 # Changelog
 
 
+
 ## [0.0.5] - 2026-02-21
 ### Changed
 - Hunter tested-seed persistence now uses a compact SQLite cache (`runs/anomalies/tested_seeds.sqlite3`) with in-place updates (`INSERT OR IGNORE`) instead of a growing text log.
