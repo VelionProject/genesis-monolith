@@ -1,16 +1,7 @@
 # Changelog
 
 
-## [0.0.7] - 2026-02-21
-### Changed
-- Anomaly inbox double-click now loads the first alive (`paths.birth`) snapshot by default and falls back to `paths.end` only when no birth snapshot is available.
-- Inbox detail text now indicates whether a `birth` or `end` snapshot was loaded.
 
-## [0.0.6] - 2026-02-21
-### Changed
-- UI sidebar is now wrapped in a vertical `QScrollArea` to prevent clipping when window height is limited and to keep future control additions accessible.
-- Added a persistent bottom toggle button to hide/show the sidebar and restore a readable splitter ratio when re-enabled.
-- Added sidebar/plot minimum widths and splitter default sizes to improve resize/fullscreen stability.
 
 ## [0.0.5] - 2026-02-21
 ### Changed
