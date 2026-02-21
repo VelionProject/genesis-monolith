@@ -2,9 +2,6 @@
 
 
 
-## [0.0.7] - 2026-02-21
-### Fixed
-- Synchronized `post_step_jobs()` replication detection call with `match_replications(fps_now, history, dt_ticks, sim_thresh)` by removing stale kwargs (`t_now`, `dt_max`, `sim_thr`) and aligning argument order/names.
 
 ## [0.0.6] - 2026-02-21
 ### Added
