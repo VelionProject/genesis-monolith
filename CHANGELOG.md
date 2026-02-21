@@ -2,6 +2,10 @@
 
 
 
+## [0.0.6] - 2026-02-21
+### Added
+- Added a standalone `tests/` suite with deterministic core checks (`test_determinism.py`), mass bounds sanity checks (`test_mass.py`), snapshot roundtrip validation (`test_snapshot.py`), and NaN/Inf stability checks (`test_no_nan.py`).
+- Added `tests/conftest.py` to ensure stable imports from the repository root when running pytest from different working directories.
 
 ## [0.0.5] - 2026-02-21
 ### Changed
