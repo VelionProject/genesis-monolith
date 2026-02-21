@@ -1339,12 +1339,12 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 )
                 clusters = n_clusters
                 fps = compute_fingerprints(self.core, labels, n_clusters)
+                # Structural note: keep call signature synchronized with match_replications(fps_now, history, dt_ticks, sim_thresh).
                 rep = match_replications(
-                    self._fp_history,
                     fps,
-                    t_now=self.core.tick,
-                    dt_max=self.cfg.detect_match_dt_ticks,
-                    sim_thr=self.cfg.detect_similarity_threshold,
+                    self._fp_history,
+                    dt_ticks=self.cfg.detect_match_dt_ticks,
+                    sim_thresh=self.cfg.detect_similarity_threshold,
                 )
                 if rep:
                     self._replication_events += len(rep)
