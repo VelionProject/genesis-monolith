@@ -1,6 +1,10 @@
 # Changelog
 
 
+## [0.0.4] - 2026-02-20
+### Changed
+- Hunter now persists a `tested_seeds.log` file in `runs/anomalies` and skips already-tested seeds across runs to avoid re-testing known dead/processed seeds.
+
 ## [0.0.3] - 2026-02-19
 ### Changed
 - Updated PyQtGraph cockpit plots to dark-mode styling with high-contrast titles and fixed (non-pan/zoom) grid interaction.

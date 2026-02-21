@@ -27,7 +27,7 @@ import argparse
 import hashlib
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -730,11 +730,50 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self._tested = 0
             self._found = 0
             self._rng = np.random.default_rng(int(time.time()) & 0x7FFFFFFF)
+            self._tested_seeds: Set[int] = set()
+            self._tested_seeds_path: Optional[Path] = None
 
             # dynamic settings (UI can update)
             self.target_survival = base_cfg.hunter_target_survival_ticks
             self.max_ticks = base_cfg.hunter_max_ticks_per_seed
             self.batch = base_cfg.hunter_seeds_per_batch
+
+        # Structural change: persist tested seed ids so the hunter can skip known dead/already-tested seeds.
+        def _load_tested_seeds(self, anomalies_dir: Path) -> None:
+            self._tested_seeds_path = anomalies_dir / "tested_seeds.log"
+            self._tested_seeds = set()
+            if not self._tested_seeds_path.exists():
+                return
+            try:
+                for line in self._tested_seeds_path.read_text(encoding="utf-8").splitlines():
+                    val = line.strip()
+                    if not val:
+                        continue
+                    self._tested_seeds.add(int(val))
+            except Exception:
+                # Keep hunter resilient even if cache is partially corrupted.
+                self._tested_seeds = set()
+
+        # Structural change: append every tested seed to persistent cache for cross-session de-duplication.
+        def _mark_seed_tested(self, seed: int) -> None:
+            if seed in self._tested_seeds:
+                return
+            self._tested_seeds.add(seed)
+            if self._tested_seeds_path is None:
+                return
+            with self._tested_seeds_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"{int(seed)}\n")
+
+        # Structural change: generate unique seeds only, skipping entries already tested in previous/active runs.
+        def _seed_batch_unique(self) -> List[int]:
+            unique: List[int] = []
+            target = max(1, int(self.batch))
+            while len(unique) < target:
+                candidate = int(self._rng.integers(0, 2**31 - 1))
+                if candidate in self._tested_seeds or candidate in unique:
+                    continue
+                unique.append(candidate)
+            return unique
 
         def stop(self):
             self._running = False
@@ -743,10 +782,11 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self._running = True
             anomalies_dir = Path(self.base_cfg.hunter_anomalies_dir)
             ensure_dir(anomalies_dir)
+            self._load_tested_seeds(anomalies_dir)
 
-            self.status.emit("Hunter: running")
+            self.status.emit(f"Hunter: running (known_tested={len(self._tested_seeds)})")
             while self._running:
-                seeds = _seed_stream(self._rng, max(1, int(self.batch)))
+                seeds = self._seed_batch_unique()
                 for sd in seeds:
                     if not self._running:
                         break
@@ -791,6 +831,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                                 )
                                 self._found += 1
                                 self._tested += 1
+                                self._mark_seed_tested(sd)
                                 self.stats.emit(self._tested, self._found)
                                 self.found.emit(str(out / "summary.json"))
                                 self.status.emit(f"Hunter: FOUND seed={sd} survived={core.tick - alive_start_tick}")
@@ -814,6 +855,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                                 )
                                 self._found += 1
                                 self._tested += 1
+                                self._mark_seed_tested(sd)
                                 self.stats.emit(self._tested, self._found)
                                 self.found.emit(str(out / "summary.json"))
                                 self.status.emit(f"Hunter: anomaly seed={sd} reason={reason}")
@@ -822,6 +864,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                     # if no anomaly found, just count as tested
                     if self._running:
                         self._tested += 1
+                        self._mark_seed_tested(sd)
                         self.stats.emit(self._tested, self._found)
 
                 # tiny breather so UI stays snappy
