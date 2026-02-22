@@ -2,6 +2,15 @@
 
 
 
+## [0.0.10] - 2026-02-22
+### Added
+- Added a runtime Activity Glow overlay (`ΔS`) in the cockpit with a sidebar toggle and activity status label (`stable` / `moderate` / `active`) so simulation dynamics are visible directly in the UI.
+- Added deterministic helper utilities (`compute_activity_map`, `classify_activity_level`) and unit tests for normalization and threshold classification.
+
+## [0.0.9] - 2026-02-22
+### Added
+- Added a no-code product/UX specification for visual dynamics overlays (activity glow, diffusion flow vectors, and mutation stress monitor), including default thresholds, compositing order, and rollout phases (`docs/visual-dynamics-overlay-spec.md`).
+
 
 ## [0.0.8] - 2026-02-21
 ### Changed
