@@ -591,6 +591,24 @@ def entropy_1d(x: np.ndarray, bins: int = 24, eps: float = 1e-12) -> float:
     return float(-(p * np.log(p + eps)).sum())
 
 
+def compute_activity_map(prev_state: np.ndarray, curr_state: np.ndarray, eps: float = 1e-9) -> np.ndarray:
+    """Normalized absolute per-cell delta map in [0,1] for visual activity overlays."""
+    delta = np.abs(curr_state - prev_state)
+    scale = float(np.max(delta))
+    if scale <= eps:
+        return np.zeros_like(delta, dtype=np.float32)
+    return (delta / scale).astype(np.float32)
+
+
+def classify_activity_level(score: float) -> str:
+    """Three-band activity label used by the cockpit summary UI."""
+    if score < 0.08:
+        return "stable"
+    if score < 0.35:
+        return "moderate"
+    return "active"
+
+
 # =========================
 # Layer: Hunter (Agent)
 # =========================
@@ -930,6 +948,11 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self._frame_counter = 0
             self._fp_history: List[ClusterFP] = []
             self._replication_events = 0
+            # Structural UI state change: cache the previous S field so activity glow visualizes
+            # true inter-step deltas instead of static magnitude.
+            self._prev_s_for_activity = self.core.S.copy()
+            self._activity_map = np.zeros_like(self.core.S, dtype=np.float32)
+            self._activity_score = 0.0
 
             # hunter
             self.hunter = SeedHunter(self.cfg)
@@ -1091,12 +1114,16 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.cb_proto = QCheckBox(f"S > {self.cfg.proto_S_threshold} (proto)")
             self.cb_alive = QCheckBox(f"S > {self.cfg.alive_S_threshold} (alive-cand)")
             self.cb_showM = QCheckBox("Show M")
+            self.cb_activity_glow = QCheckBox("Activity Glow (ΔS)")
             self.cb_proto.setChecked(True)
             self.cb_alive.setChecked(False)
             self.cb_showM.setChecked(bool(self.cfg.enable_M))
-            for cb in [self.cb_proto, self.cb_alive, self.cb_showM]:
+            self.cb_activity_glow.setChecked(True)
+            for cb in [self.cb_proto, self.cb_alive, self.cb_showM, self.cb_activity_glow]:
                 cb.stateChanged.connect(lambda: self.refresh_plots())
                 overlay_layout.addWidget(cb)
+            self.lbl_activity = QLabel("activity: stable (0.000)")
+            overlay_layout.addWidget(self.lbl_activity)
             box.addWidget(overlay_group)
 
             det_group = QGroupBox("Detection")
@@ -1226,6 +1253,10 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.imR = pg.ImageItem(axisOrder="row-major")
                 self.imS = pg.ImageItem(axisOrder="row-major")
                 self.imM = pg.ImageItem(axisOrder="row-major")
+                # Structural UI change: dedicated activity overlay item sits above S and renders
+                # normalized inter-step growth dynamics without mutating simulation data.
+                self.imActivity = pg.ImageItem(axisOrder="row-major")
+                self.imActivity.setZValue(20)
 
                 # Structural UI change: dedicated LUTs increase channel contrast readability.
 
@@ -1233,6 +1264,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.plotE.addItem(self.imE)
                 self.plotR.addItem(self.imR)
                 self.plotS.addItem(self.imS)
+                self.plotS.addItem(self.imActivity)
                 self.plotM.addItem(self.imM)
 
                 # Structural UI change: contour overlays become explicit isocurve items
@@ -1268,6 +1300,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.imR = self.axR.imshow(self.core.R1, cmap="viridis", vmin=0, vmax=1)
             self.imS = self.axS.imshow(self.core.S, cmap="magma", vmin=0, vmax=1)
             self.imM = self.axM.imshow(self.core.M, cmap="viridis", vmin=0, vmax=1)
+            # Structural UI change: Matplotlib fallback gets the same activity glow semantics as
+            # PyQtGraph by layering a transparent ΔS heatmap over the S panel.
+            self.imActivity = self.axS.imshow(self.core.S * 0.0, cmap="cool", vmin=0, vmax=1, alpha=0.0)
 
             self._cont_proto = None
             self._cont_alive = None
@@ -1308,6 +1343,11 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             for _ in range(n):
                 self.core.step()
                 self._auto_snapshot_tick()
+            # Structural observability change: compute a normalized ΔS map once per step batch so
+            # the activity overlay reflects progression and remains deterministic.
+            self._activity_map = compute_activity_map(self._prev_s_for_activity, self.core.S)
+            self._activity_score = float(np.mean(self._activity_map))
+            self._prev_s_for_activity = self.core.S.copy()
             self.post_step_jobs()
             self.refresh_plots()
 
@@ -1317,6 +1357,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.core.reset(same_seed=True)
             self._fp_history.clear()
             self._replication_events = 0
+            self._prev_s_for_activity = self.core.S.copy()
+            self._activity_map.fill(0.0)
+            self._activity_score = 0.0
             self.eventlog.write({"t": self.core.tick, "type": "reset", "same_seed": True, "seed": self.core.seed})
             self.refresh_plots()
 
@@ -1326,6 +1369,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.core.reset(same_seed=False)
             self._fp_history.clear()
             self._replication_events = 0
+            self._prev_s_for_activity = self.core.S.copy()
+            self._activity_map.fill(0.0)
+            self._activity_score = 0.0
             self.eventlog.write({"t": self.core.tick, "type": "reset", "same_seed": False, "seed": self.core.seed})
             self.refresh_plots()
 
@@ -1415,12 +1461,23 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 else:
                     self._alive_curve.hide()
 
+                if self.cb_activity_glow.isChecked():
+                    glow = np.clip((self._activity_map - 0.08) / 0.92, 0.0, 1.0)
+                    rgba = np.zeros((*glow.shape, 4), dtype=np.uint8)
+                    rgba[..., 1] = 190
+                    rgba[..., 2] = 255
+                    rgba[..., 3] = (glow * 170.0).astype(np.uint8)
+                    self.imActivity.setImage(rgba, autoLevels=False)
+                else:
+                    self.imActivity.setImage(np.zeros((*self.core.S.shape, 4), dtype=np.uint8), autoLevels=False)
+
                 self.lbl_tick.setText(f"Tick: {self.core.tick}")
                 self.lbl_stats.setText(
                     f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
                     f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
                 )
                 self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+                self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
                 return
 
             self.imE.set_data(self.core.E)
@@ -1459,12 +1516,20 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                     linewidths=0.9,
                 )
 
+            if self.cb_activity_glow.isChecked():
+                glow = np.clip((self._activity_map - 0.08) / 0.92, 0.0, 1.0)
+                self.imActivity.set_data(self._activity_map)
+                self.imActivity.set_alpha(glow * 0.65)
+            else:
+                self.imActivity.set_alpha(0.0)
+
             self.lbl_tick.setText(f"Tick: {self.core.tick}")
             self.lbl_stats.setText(
                 f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
                 f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
             )
             self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+            self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
             self.canvas.draw_idle()
 
         def on_hunter_params(self):
@@ -1540,6 +1605,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.cb_enable_m.setChecked(bool(self.cfg.enable_M))
                 self._fp_history.clear()
                 self._replication_events = 0
+                self._prev_s_for_activity = self.core.S.copy()
+                self._activity_map = np.zeros_like(self.core.S, dtype=np.float32)
+                self._activity_score = 0.0
                 self.eventlog.write({"t": self.core.tick, "type": "load_anomaly", "summary": str(path)})
                 loaded_kind = "birth" if paths.get('birth') else "end"
                 self.lbl_inbox_detail.setText(
