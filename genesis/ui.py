@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+# Structural compatibility note:
+# Allow direct script execution (`python genesis/ui.py`) by bootstrapping package context.
+# This keeps relative imports valid while preserving package-first execution semantics.
+if __name__ == "__main__" and (__package__ is None or __package__ == ""):
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    __package__ = "genesis"
+
 import json
 import sqlite3
 import sys
@@ -939,3 +949,17 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
     w.resize(1600, 700)
     w.show()
     app.exec()
+
+
+def run_ui_standalone() -> None:
+    """Run UI with default config for direct module/script execution."""
+    from .hunter import ensure_dir, now_id
+
+    cfg = WorldConfig()
+    run_dir = ensure_dir(Path(cfg.out_dir) / now_id())
+    (run_dir / "snapshots").mkdir(parents=True, exist_ok=True)
+    run_ui(cfg=cfg, seed=12345, run_dir=run_dir)
+
+
+if __name__ == "__main__":
+    run_ui_standalone()

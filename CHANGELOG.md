@@ -1,6 +1,13 @@
 # Changelog
 
 
+## [0.0.13] - 2026-02-22
+### Fixed
+- Fixed direct UI script execution by adding package bootstrap support in `genesis/ui.py`, so `python genesis/ui.py` works without relative-import errors.
+
+### Changed
+- Extended README UI startup section with `Monolith.py`, module (`python -m genesis.ui`), and direct-file launch variants.
+
 ## [0.0.12] - 2026-02-22
 ### Changed
 - Reworked `README.md` into a professional project guide with architecture/module overview, setup instructions, run modes, CLI flags, quality checks, and development workflow notes aligned with the modularized codebase.

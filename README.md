@@ -106,6 +106,10 @@ python -m pip install numpy pytest PySide6 pyqtgraph matplotlib
 
 ```bash
 python Monolith.py
+# alternativ (Modulstart)
+python -m genesis.ui
+# alternativ (direkte Datei, jetzt kompatibel)
+python genesis/ui.py
 ```
 
 ### Headless starten
