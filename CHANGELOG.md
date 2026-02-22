@@ -1,6 +1,14 @@
 # Changelog
 
 
+## [0.0.12] - 2026-02-22
+### Changed
+- Reworked `README.md` into a professional project guide with architecture/module overview, setup instructions, run modes, CLI flags, quality checks, and development workflow notes aligned with the modularized codebase.
+
+## [0.0.11] - 2026-02-22
+### Changed
+- Structural refactor: split the previous single-file `Monolith.py` implementation into a modular `genesis/` package (`config`, `persistence`, `core`, `observability`, `hunter`, `ui`, `headless`, `cli`) while preserving existing external behavior via compatibility re-exports.
+
 
 ## [0.0.10] - 2026-02-22
 ### Added
