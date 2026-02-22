@@ -1,6 +1,10 @@
 # Changelog
 
 
+## [0.0.11] - 2026-02-22
+### Changed
+- Structural refactor: split the previous single-file `Monolith.py` implementation into a modular `genesis/` package (`config`, `persistence`, `core`, `observability`, `hunter`, `ui`, `headless`, `cli`) while preserving existing external behavior via compatibility re-exports.
+
 
 ## [0.0.10] - 2026-02-22
 ### Added
