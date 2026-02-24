@@ -1,6 +1,20 @@
 # Changelog
 
 
+## [0.0.13] - 2026-02-24
+### Changed
+- Made the chemistry/physics implementation visually explicit in the cockpit by adding a dedicated **KPI Cockpit** section (Viability Risk, Conversion Efficiency, Strategy Bias) in the sidebar, instead of only subtle footer text updates.
+- Added a toggleable **Viability Risk Overlay** (`high S + low E`) rendered directly over the `S` panel so starvation pressure is visible at a glance.
+- Renamed the `M` panel title from `Proto-Genom` to `Genome Bias` for consistent terminology with the analysis model.
+
+## [0.0.12] - 2026-02-24
+### Added
+- Added derived cockpit KPIs aligned with the chemistry/physics analysis model: viability risk (`high S + low E`), conversion efficiency proxy (`S/E`), and strategy bias (`M-0.5`) in the live status panel.
+- Added unit tests for field naming normalization and derived KPI helper functions (`tests/test_visual_kpis.py`).
+
+### Changed
+- Normalized UI terminology to the proposed naming grammar by renaming `R1 (Raw)` to `R1 (Precursor)` and exposing the `M` overlay as `Genome Bias` in the sidebar.
+
 ## [0.0.11] - 2026-02-23
 ### Added
 - Added a no-code chemistry/physics notation analysis document that maps `E`, `R1`, `R2`, `S`, `T`, `M` to simulation semantics and proposes a visualization grammar for future cockpit design (`docs/chemistry-physics-analysis-model.md`).
