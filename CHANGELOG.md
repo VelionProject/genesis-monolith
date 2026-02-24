@@ -5,6 +5,12 @@
 ### Changed
 - Updated cockpit sidebar UX to include panel visibility toggles and an in-UI chemistry semantics legend, while preserving Hunter/Inbox controls as toggleable sections.
 - Renamed key UI labels to domain-oriented wording (`R1` as Boden/Substrat and `M` as Membran) in plot titles and runtime stats for better interpretability.
+### Added
+- Added derived cockpit KPIs aligned with the chemistry/physics analysis model: viability risk (`high S + low E`), conversion efficiency proxy (`S/E`), and strategy bias (`M-0.5`) in the live status panel.
+- Added unit tests for field naming normalization and derived KPI helper functions (`tests/test_visual_kpis.py`).
+
+### Changed
+- Normalized UI terminology to the proposed naming grammar by renaming `R1 (Raw)` to `R1 (Precursor)` and exposing the `M` overlay as `Genome Bias` in the sidebar.
 
 ## [0.0.11] - 2026-02-23
 ### Added
