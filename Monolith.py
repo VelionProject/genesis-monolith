@@ -749,7 +749,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
         QHBoxLayout, QVBoxLayout, QPushButton,
         QSlider, QLabel, QCheckBox, QGroupBox, QSpinBox,
         QListWidget, QListWidgetItem, QSplitter, QLineEdit,
-        QScrollArea
+        QScrollArea, QFrame
     )
 
     # Renderer selection (UI-only): prefer PyQtGraph for high-frequency image updates,
@@ -1010,14 +1010,18 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             self.sidebar_scroll = QScrollArea()
             self.sidebar_scroll.setWidgetResizable(True)
-            self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            # Structural UI change: allow horizontal fallback scrolling so no control text gets
+            # cut off on narrow windows or high-DPI scaling.
+            self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             self.sidebar_scroll.setWidget(self.sidebar)
 
             self.sidebar_panel = QWidget()
             self.sidebar_panel_layout = QVBoxLayout(self.sidebar_panel)
             self.sidebar_panel_layout.setContentsMargins(0, 0, 0, 0)
             self.sidebar_panel_layout.addWidget(self.sidebar_scroll)
-            self.sidebar_panel.setMinimumWidth(360)
+            # Structural UI change: wider minimum sidebar prevents clipped controls and keeps
+            # labels readable without forcing users to manually resize first.
+            self.sidebar_panel.setMinimumWidth(460)
 
             self.plot_panel = self._build_plots()
             self.plot_panel.setMinimumWidth(640)
@@ -1026,7 +1030,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.splitter.addWidget(self.plot_panel)
             self.splitter.setStretchFactor(0, 0)
             self.splitter.setStretchFactor(1, 1)
-            self.splitter.setSizes([420, 1100])
+            self._restore_splitter_sizes()
 
             self._build_sidebar()
 
@@ -1057,6 +1061,19 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             finally:
                 super().closeEvent(event)
 
+        # Structural UI change: centralized splitter sizing keeps sidebar width in a readable
+        # range and prevents accidental clipping after resize/show operations.
+        def _restore_splitter_sizes(self):
+            total = max(900, self.width() or 1520)
+            sidebar = max(460, min(620, int(total * 0.34)))
+            self.splitter.setSizes([sidebar, max(640, total - sidebar)])
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            if self.sidebar_panel.isVisible():
+                sizes = self.splitter.sizes()
+                if sizes and sizes[0] < 460:
+                    self._restore_splitter_sizes()
 
         # Structural UI change: toggle sidebar visibility with safe splitter resizing.
         def toggle_sidebar(self):
@@ -1067,7 +1084,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.sidebar_panel.show()
                 self.btn_sidebar_toggle.setText("Sidebar ausblenden")
                 # Restore readable default ratio after re-showing the sidebar.
-                self.splitter.setSizes([420, 1100])
+                self._restore_splitter_sizes()
 
         # -------------------------
         # Sidebar
@@ -1108,6 +1125,11 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.btn_start = QPushButton("START")
             self.btn_start.clicked.connect(self.toggle_start_pause)
             box.addWidget(self.btn_start)
+
+            sep_top = QFrame()
+            sep_top.setFrameShape(QFrame.HLine)
+            sep_top.setFrameShadow(QFrame.Sunken)
+            box.addWidget(sep_top)
 
             step_group = QGroupBox("Step")
             # Structural UI change: keep preset step buttons and add a custom tick runner in the
@@ -1250,7 +1272,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             inbox_layout = QVBoxLayout(self.inbox_group)
 
             self.txt_filter = QLineEdit()
-            self.txt_filter.setPlaceholderText("filter: seed / reason / survived...")
+            self.txt_filter.setPlaceholderText("filter: seed / reason / survived")
             self.txt_filter.textChanged.connect(self.scan_inbox)
             inbox_layout.addWidget(self.txt_filter)
 
@@ -1273,10 +1295,13 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.lbl_stats = QLabel("Energy max: 0.00 | Precursor max: 0.00 | Structure max: 0.00 | Genome μ: 0.00")
             self.lbl_kpi = QLabel("risk μ: 0.000 | eff S/E: 0.000 | strategy M: +0.000")
             self.lbl_hash = QLabel("hash: -")
+            self.lbl_hash.setWordWrap(True)
             box.addWidget(self.lbl_tick)
             box.addWidget(self.lbl_stats)
             box.addWidget(self.lbl_hash)
             box.addWidget(self.lbl_kpi)
+
+            self.on_panel_visibility_changed()
 
             self.on_panel_visibility_changed()
 
