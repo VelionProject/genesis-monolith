@@ -609,6 +609,36 @@ def classify_activity_level(score: float) -> str:
     return "active"
 
 
+FIELD_DISPLAY_NAMES: Dict[str, str] = {
+    "E": "Energy",
+    "R1": "Precursor",
+    "R2": "Activated Intermediate",
+    "S": "Structure",
+    "T": "Byproduct",
+    "M": "Genome Bias",
+}
+
+
+def compute_viability_risk_map(S: np.ndarray, E: np.ndarray, eps: float = 1e-9) -> np.ndarray:
+    """High risk appears where structure exists while local energy is scarce."""
+    s_norm = S / max(float(S.max()), eps)
+    e_norm = E / max(float(E.max()), eps)
+    risk = np.clip(s_norm * (1.0 - e_norm), 0.0, 1.0)
+    return risk.astype(np.float32)
+
+
+def compute_conversion_efficiency(S: np.ndarray, E: np.ndarray, eps: float = 1e-9) -> float:
+    """Global proxy KPI: structure stock normalized by available energy stock."""
+    s_total = float(np.sum(S))
+    e_total = float(np.sum(E))
+    return s_total / max(e_total, eps)
+
+
+def compute_strategy_bias(M: np.ndarray) -> float:
+    """Global strategy indicator where positive values bias fast conversion (k2-up)."""
+    return float(np.mean(np.clip(M, 0.0, 1.0)) - 0.5)
+
+
 # =========================
 # Layer: Hunter (Agent)
 # =========================
@@ -1113,7 +1143,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             overlay_layout = QVBoxLayout(overlay_group)
             self.cb_proto = QCheckBox(f"S > {self.cfg.proto_S_threshold} (proto)")
             self.cb_alive = QCheckBox(f"S > {self.cfg.alive_S_threshold} (alive-cand)")
-            self.cb_showM = QCheckBox("Show M")
+            self.cb_showM = QCheckBox(f"Show M ({FIELD_DISPLAY_NAMES['M']})")
             self.cb_activity_glow = QCheckBox("Activity Glow (ΔS)")
             self.cb_proto.setChecked(True)
             self.cb_alive.setChecked(False)
@@ -1211,11 +1241,13 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             # -------- Footer --------
             self.lbl_tick = QLabel("Tick: 0")
-            self.lbl_stats = QLabel("Emax: 0.00 | R1max: 0.00 | Smax: 0.00 | Mμ: 0.00")
+            self.lbl_stats = QLabel("Energy max: 0.00 | Precursor max: 0.00 | Structure max: 0.00 | Genome μ: 0.00")
+            self.lbl_kpi = QLabel("risk μ: 0.000 | eff S/E: 0.000 | strategy M: +0.000")
             self.lbl_hash = QLabel("hash: -")
             box.addWidget(self.lbl_tick)
             box.addWidget(self.lbl_stats)
             box.addWidget(self.lbl_hash)
+            box.addWidget(self.lbl_kpi)
 
             box.addStretch(1)
 
@@ -1237,7 +1269,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.plotS = self.pg_layout.addPlot(0, 2)
                 self.plotM = self.pg_layout.addPlot(0, 3)
                 self.plotE.setTitle("E (Energy)", **title_style)
-                self.plotR.setTitle("R1 (Raw)", **title_style)
+                self.plotR.setTitle("R1 (Precursor)", **title_style)
                 self.plotS.setTitle("S (Structure)", **title_style)
                 self.plotM.setTitle("M (Proto-Genom)", **title_style)
 
@@ -1288,7 +1320,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             for ax, title in [
                 (self.axE, "E (Energy)"),
-                (self.axR, "R1 (Raw)"),
+                (self.axR, "R1 (Precursor)"),
                 (self.axS, "S (Structure)"),
                 (self.axM, "M (Proto-Genom)"),
             ]:
@@ -1471,12 +1503,19 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 else:
                     self.imActivity.setImage(np.zeros((*self.core.S.shape, 4), dtype=np.uint8), autoLevels=False)
 
+                viability_risk_map = compute_viability_risk_map(self.core.S, self.core.E)
+                conversion_eff = compute_conversion_efficiency(self.core.S, self.core.E)
+                strategy_bias = compute_strategy_bias(self.core.M)
+
                 self.lbl_tick.setText(f"Tick: {self.core.tick}")
                 self.lbl_stats.setText(
-                    f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
-                    f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                    f"Energy max: {self.core.E.max():.3f} | Precursor max: {self.core.R1.max():.3f} | "
+                    f"Structure max: {self.core.S.max():.3f} | Genome μ: {self.core.M.mean():.3f}"
                 )
                 self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+                self.lbl_kpi.setText(
+                    f"risk μ: {float(np.mean(viability_risk_map)):.3f} | eff S/E: {conversion_eff:.3f} | strategy M: {strategy_bias:+.3f}"
+                )
                 self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
                 return
 
@@ -1523,12 +1562,19 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             else:
                 self.imActivity.set_alpha(0.0)
 
+            viability_risk_map = compute_viability_risk_map(self.core.S, self.core.E)
+            conversion_eff = compute_conversion_efficiency(self.core.S, self.core.E)
+            strategy_bias = compute_strategy_bias(self.core.M)
+
             self.lbl_tick.setText(f"Tick: {self.core.tick}")
             self.lbl_stats.setText(
-                f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
-                f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                f"Energy max: {self.core.E.max():.3f} | Precursor max: {self.core.R1.max():.3f} | "
+                f"Structure max: {self.core.S.max():.3f} | Genome μ: {self.core.M.mean():.3f}"
             )
             self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
+            self.lbl_kpi.setText(
+                f"risk μ: {float(np.mean(viability_risk_map)):.3f} | eff S/E: {conversion_eff:.3f} | strategy M: {strategy_bias:+.3f}"
+            )
             self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
             self.canvas.draw_idle()
 
