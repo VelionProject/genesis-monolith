@@ -1046,6 +1046,35 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             box = self.sidebar_layout
             box.addWidget(QLabel("<b>CONTROLS</b>"))
 
+            # Structural UI change: central view controls keep major sidebar sections explicitly
+            # toggleable so users can declutter the cockpit without losing functionality.
+            view_group = QGroupBox("View / Panels")
+            view_layout = QVBoxLayout(view_group)
+            self.cb_show_detection = QCheckBox("Show Detection")
+            self.cb_show_detection.setChecked(True)
+            self.cb_show_phase = QCheckBox("Show Phase Toggles")
+            self.cb_show_phase.setChecked(True)
+            self.cb_show_hunter = QCheckBox("Show Hunter")
+            self.cb_show_hunter.setChecked(True)
+            self.cb_show_inbox = QCheckBox("Show Inbox")
+            self.cb_show_inbox.setChecked(True)
+            for cb in [self.cb_show_detection, self.cb_show_phase, self.cb_show_hunter, self.cb_show_inbox]:
+                cb.stateChanged.connect(self.on_panel_visibility_changed)
+                view_layout.addWidget(cb)
+            box.addWidget(view_group)
+
+            # Structural UI change: semantic legend communicates domain naming directly in the
+            # cockpit so R1/R2/S/T/M stay understandable during analysis sessions.
+            sem_group = QGroupBox("Semantics")
+            sem_layout = QVBoxLayout(sem_group)
+            sem_layout.addWidget(QLabel("E — Energy"))
+            sem_layout.addWidget(QLabel("R1 — Boden / Substrat"))
+            sem_layout.addWidget(QLabel("R2 — Produkt"))
+            sem_layout.addWidget(QLabel("S — Struktur"))
+            sem_layout.addWidget(QLabel("T — Toxine"))
+            sem_layout.addWidget(QLabel("M — Membran (Mutation wirkt auf M)"))
+            box.addWidget(sem_group)
+
             self.btn_start = QPushButton("START")
             self.btn_start.clicked.connect(self.toggle_start_pause)
             box.addWidget(self.btn_start)
@@ -1126,28 +1155,28 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             overlay_layout.addWidget(self.lbl_activity)
             box.addWidget(overlay_group)
 
-            det_group = QGroupBox("Detection")
-            det_layout = QVBoxLayout(det_group)
+            self.det_group = QGroupBox("Detection")
+            det_layout = QVBoxLayout(self.det_group)
             self.cb_detect = QCheckBox("Enable Replicator Detection")
             self.cb_detect.setChecked(self.cfg.detect_enabled)
             self.cb_detect.stateChanged.connect(self.on_detect_toggle)
             det_layout.addWidget(self.cb_detect)
             self.lbl_detect = QLabel("clusters: 0 | replications: 0")
             det_layout.addWidget(self.lbl_detect)
-            box.addWidget(det_group)
+            box.addWidget(self.det_group)
 
             # -------- Phase toggles --------
-            phase_group = QGroupBox("Phase Toggles")
-            phase_layout = QVBoxLayout(phase_group)
+            self.phase_group = QGroupBox("Phase Toggles")
+            phase_layout = QVBoxLayout(self.phase_group)
             self.cb_enable_m = QCheckBox("Enable M / Mutation Layer")
             self.cb_enable_m.setChecked(self.cfg.enable_M)
             self.cb_enable_m.stateChanged.connect(self.on_m_toggle)
             phase_layout.addWidget(self.cb_enable_m)
-            box.addWidget(phase_group)
+            box.addWidget(self.phase_group)
 
             # -------- Hunter --------
-            hunt_group = QGroupBox("Hunter Agent")
-            hunt_layout = QVBoxLayout(hunt_group)
+            self.hunt_group = QGroupBox("Hunter Agent")
+            hunt_layout = QVBoxLayout(self.hunt_group)
 
             self.btn_hunt = QPushButton("HUNT: OFF")
             self.btn_hunt.clicked.connect(self.toggle_hunter)
@@ -1184,11 +1213,11 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.lbl_hunt_stats = QLabel("tested: 0 | found: 0")
             hunt_layout.addWidget(self.lbl_hunt_status)
             hunt_layout.addWidget(self.lbl_hunt_stats)
-            box.addWidget(hunt_group)
+            box.addWidget(self.hunt_group)
 
             # -------- Inbox --------
-            inbox_group = QGroupBox("Anomaly Inbox (double-click to load)")
-            inbox_layout = QVBoxLayout(inbox_group)
+            self.inbox_group = QGroupBox("Anomaly Inbox (double-click to load)")
+            inbox_layout = QVBoxLayout(self.inbox_group)
 
             self.txt_filter = QLineEdit()
             self.txt_filter.setPlaceholderText("filter: seed / reason / survived...")
@@ -1207,7 +1236,7 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             self.lbl_inbox_detail.setWordWrap(True)
             inbox_layout.addWidget(self.lbl_inbox_detail)
 
-            box.addWidget(inbox_group)
+            box.addWidget(self.inbox_group)
 
             # -------- Footer --------
             self.lbl_tick = QLabel("Tick: 0")
@@ -1217,7 +1246,15 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
             box.addWidget(self.lbl_stats)
             box.addWidget(self.lbl_hash)
 
+            self.on_panel_visibility_changed()
+
             box.addStretch(1)
+
+        def on_panel_visibility_changed(self):
+            self.det_group.setVisible(self.cb_show_detection.isChecked())
+            self.phase_group.setVisible(self.cb_show_phase.isChecked())
+            self.hunt_group.setVisible(self.cb_show_hunter.isChecked())
+            self.inbox_group.setVisible(self.cb_show_inbox.isChecked())
 
         # -------------------------
         # Plots
@@ -1237,9 +1274,9 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
                 self.plotS = self.pg_layout.addPlot(0, 2)
                 self.plotM = self.pg_layout.addPlot(0, 3)
                 self.plotE.setTitle("E (Energy)", **title_style)
-                self.plotR.setTitle("R1 (Raw)", **title_style)
+                self.plotR.setTitle("R1 (Boden/Substrat)", **title_style)
                 self.plotS.setTitle("S (Structure)", **title_style)
-                self.plotM.setTitle("M (Proto-Genom)", **title_style)
+                self.plotM.setTitle("M (Membran)", **title_style)
 
                 for plot in [self.plotE, self.plotR, self.plotS, self.plotM]:
                     plot.setAspectLocked(True)
@@ -1473,8 +1510,8 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
                 self.lbl_tick.setText(f"Tick: {self.core.tick}")
                 self.lbl_stats.setText(
-                    f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
-                    f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                    f"Emax: {self.core.E.max():.3f} | R1(Boden)max: {self.core.R1.max():.3f} | "
+                    f"S(Struktur)max: {self.core.S.max():.3f} | M(Membran)μ: {self.core.M.mean():.3f}"
                 )
                 self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
                 self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
@@ -1525,8 +1562,8 @@ def run_ui(cfg: WorldConfig, seed: int, run_dir: Path) -> None:
 
             self.lbl_tick.setText(f"Tick: {self.core.tick}")
             self.lbl_stats.setText(
-                f"Emax: {self.core.E.max():.3f} | R1max: {self.core.R1.max():.3f} | "
-                f"Smax: {self.core.S.max():.3f} | Mμ: {self.core.M.mean():.3f}"
+                f"Emax: {self.core.E.max():.3f} | R1(Boden)max: {self.core.R1.max():.3f} | "
+                f"S(Struktur)max: {self.core.S.max():.3f} | M(Membran)μ: {self.core.M.mean():.3f}"
             )
             self.lbl_hash.setText(f"hash: {self.core.state_hash()}")
             self.lbl_activity.setText(f"activity: {classify_activity_level(self._activity_score)} ({self._activity_score:.3f})")
