@@ -1,6 +1,20 @@
 # Changelog
 
 
+## [0.0.13] - 2026-02-24
+### Changed
+- Reworked cockpit sidebar layout sizing so the panel keeps a wider readable width after resize/show operations, reducing right-edge clipping of controls.
+- Enabled horizontal fallback scrolling in the sidebar and improved control readability with wrapped status labels and cleaner section separators.
+
+## [0.0.12] - 2026-02-24
+### Changed
+- Updated cockpit sidebar UX to include panel visibility toggles and an in-UI chemistry semantics legend, while preserving Hunter/Inbox controls as toggleable sections.
+- Renamed key UI labels to domain-oriented wording (`R1` as Boden/Substrat and `M` as Membran) in plot titles and runtime stats for better interpretability.
+
+## [0.0.11] - 2026-02-23
+### Added
+- Added a no-code chemistry/physics notation analysis document that maps `E`, `R1`, `R2`, `S`, `T`, `M` to simulation semantics and proposes a visualization grammar for future cockpit design (`docs/chemistry-physics-analysis-model.md`).
+
 
 ## [0.0.10] - 2026-02-22
 ### Added
